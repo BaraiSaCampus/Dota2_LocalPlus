@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+overlay_settings.json
+item_prices.json
+
+.DS_Store
+Thumbs.db
