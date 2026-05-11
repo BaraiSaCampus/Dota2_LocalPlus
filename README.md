@@ -34,8 +34,10 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
 1. 双击运行：
 
    ```text
-   一键安装并启动.bat
+   install_and_run.bat
    ```
+
+   也可以运行中文入口 `一键安装并启动.bat`，它会转到同一个英文安装脚本。新电脑上更推荐使用英文入口，避免旧版 Windows 命令行对中文文件名或编码处理异常。
 
 2. 脚本会自动完成：
 
@@ -77,7 +79,7 @@ python .\install_gsi_config.py "D:\SteamLibrary\steamapps\common\dota 2 beta"
 
 ### 1. 启动覆盖层
 
-双击 `一键安装并启动.bat`，或者手动运行：
+双击 `install_and_run.bat`，或者手动运行：
 
 ```powershell
 python .\economy_overlay.py
