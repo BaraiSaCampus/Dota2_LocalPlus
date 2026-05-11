@@ -31,6 +31,14 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
 
 推荐普通用户使用这个方式。
 
+推荐目录结构：
+
+```text
+...\steamapps\common\dota 2 beta\Dota2_LocalPlus\
+```
+
+也就是把整个项目文件夹放到 Dota2 游戏根目录 `dota 2 beta` 里面。安装脚本会优先从当前目录向上查找 `game\dota`，因此这种放法不需要手动填写 Dota2 路径。
+
 1. 双击运行：
 
    ```text
@@ -42,14 +50,34 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
 2. 脚本会自动完成：
 
    - 检查电脑是否已安装 Python
-   - 如果没有 Python，会尝试通过 Windows `winget` 自动安装 Python 3.11
-   - 安装 PySide6
+   - 如果 `dependencies\python-*.exe` 存在，会优先使用本地 Python 安装器
+   - 如果没有本地 Python 安装器，会尝试通过 Windows `winget` 自动安装 Python 3.11
+   - 如果 `dependencies\` / `deps\` / `wheels\` / `wheelhouse\` 中存在 PySide6 wheel，会优先从本地文件夹安装 PySide6
+   - 如果没有本地 wheel，才会联网从 PyPI 安装 PySide6
    - 写入 Dota2 GSI 配置
    - 启动经济覆盖层
 
 如果系统没有 `winget`，请先手动安装 Python 3.10 或更新版本，再重新双击运行。
 
 如果脚本没有找到你的 Dota2 安装目录，请使用手动安装方式。
+
+### 离线依赖包
+
+如果要把项目发给没有网络或网络较差的新电脑，可以先在有网络的电脑执行：
+
+```powershell
+python -m pip download PySide6 -d .\dependencies
+```
+
+然后把整个项目文件夹复制到新电脑。新电脑运行 `install_and_run.bat` 时，会优先从 `dependencies` 文件夹安装，不会直接联网下载 PySide6。
+
+如果还想把 Python 安装器也放进项目文件夹，可以把从 Python 官网下载的 Windows 安装器放到：
+
+```text
+dependencies\python-3.11.x-amd64.exe
+```
+
+这样新电脑没有 Python 时，脚本会优先使用这个本地安装器。
 
 ### 手动安装
 

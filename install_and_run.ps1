@@ -52,8 +52,44 @@ function Add-CommonPythonPaths {
     }
 }
 
+function Get-DependencyDirectories {
+    $names = @("dependencies", "deps", "wheels", "wheelhouse")
+    $dirs = @()
+    foreach ($name in $names) {
+        $path = Join-Path $PSScriptRoot $name
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            $dirs += (Resolve-Path -LiteralPath $path).Path
+        }
+    }
+    return $dirs
+}
+
+function Install-LocalPython {
+    $dependencyDirs = Get-DependencyDirectories
+    foreach ($dir in $dependencyDirs) {
+        $installer = Get-ChildItem -LiteralPath $dir -File -Filter "python-*.exe" -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+        if (-not $installer) {
+            continue
+        }
+
+        Write-Host "Python was not found. Installing bundled Python: $($installer.FullName)"
+        Start-Process -FilePath $installer.FullName -ArgumentList @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_pip=1", "Include_launcher=1") -Wait
+        Add-CommonPythonPaths
+        return Find-Python
+    }
+
+    return $null
+}
+
 function Ensure-Python {
     $python = Find-Python
+    if ($python) {
+        return $python
+    }
+
+    $python = Install-LocalPython
     if ($python) {
         return $python
     }
@@ -93,8 +129,25 @@ Write-Host "Using Python:"
 Invoke-Python -Python $python -Arguments @("--version")
 
 Write-Host "Installing Python dependency: PySide6"
-Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--upgrade", "pip")
-Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "PySide6")
+$dependencyDirs = Get-DependencyDirectories
+$localPySide = $null
+foreach ($dir in $dependencyDirs) {
+    $wheel = Get-ChildItem -LiteralPath $dir -File -Filter "PySide6*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($wheel) {
+        $localPySide = $dir
+        break
+    }
+}
+
+Invoke-Python -Python $python -Arguments @("-m", "ensurepip", "--upgrade")
+if ($localPySide) {
+    Write-Host "Installing PySide6 from local dependency folder: $localPySide"
+    Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--no-index", "--find-links", $localPySide, "PySide6")
+} else {
+    Write-Host "No local PySide6 wheels found. Installing PySide6 from PyPI."
+    Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "PySide6")
+}
 
 Write-Host "Writing Dota2 Game State Integration config"
 if ([string]::IsNullOrWhiteSpace($DotaPath)) {
