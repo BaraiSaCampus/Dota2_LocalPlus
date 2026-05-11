@@ -10,3 +10,10 @@ item_prices.json
 .DS_Store
 Thumbs.db
 gcm-diagnose.log
+
+build/
+dist/
+*.spec
+release/Dota2_LocalPlus/
+!release/
+!release/Dota2_LocalPlus_portable.zip

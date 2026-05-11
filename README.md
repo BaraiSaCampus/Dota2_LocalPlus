@@ -27,9 +27,41 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
 
 ## 安装说明
 
-### 一键安装并启动
+### 推荐方式：便携版
 
-推荐普通用户使用这个方式。
+最推荐普通用户使用便携版。便携版已经包含 Python 运行环境、PySide6/Qt 依赖和物品价格缓存，不需要用户安装 Python，也不需要联网安装依赖。
+
+使用方式：
+
+1. 下载或复制：
+
+   ```text
+   release\Dota2_LocalPlus_portable.zip
+   ```
+
+2. 解压后，把整个文件夹放到 Dota2 游戏根目录里：
+
+   ```text
+   ...\steamapps\common\dota 2 beta\Dota2_LocalPlus\
+   ```
+
+3. 双击运行：
+
+   ```text
+   Dota2_LocalPlus.exe
+   ```
+
+   也可以双击：
+
+   ```text
+   Start_Dota2_LocalPlus.bat
+   ```
+
+程序启动时会自动写入 Dota2 GSI 配置，然后打开经济覆盖层。未进入对局时窗口会自动隐藏，进入对局后会自动显示。
+
+### 源码方式：一键安装并启动
+
+如果你拿到的是源码目录，而不是便携版压缩包，可以使用这个方式。
 
 推荐目录结构：
 

@@ -7,6 +7,7 @@ import time
 import urllib.request
 import ctypes
 import ctypes.wintypes
+import sys
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,8 +33,6 @@ PORT = 3007
 HISTORY_SECONDS = 60
 BASE_WIDTH = 240
 BASE_HEIGHT = 178
-ITEM_CACHE = Path(__file__).with_name("item_prices.json")
-SETTINGS_FILE = Path(__file__).with_name("overlay_settings.json")
 ITEM_SOURCE_URL = "https://raw.githubusercontent.com/odota/dotaconstants/master/build/items.json"
 DEFAULT_SETTINGS = {
     "visibility_hotkey": "Ctrl+Alt+E",
@@ -43,6 +42,22 @@ IN_MATCH_STATES = {
     "DOTA_GAMERULES_STATE_PRE_GAME",
     "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS",
 }
+
+
+def app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def bundled_dir() -> Path:
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
+
+ITEM_CACHE = app_dir() / "item_prices.json"
+SETTINGS_FILE = app_dir() / "overlay_settings.json"
 
 
 def load_settings() -> dict[str, str]:
@@ -87,9 +102,11 @@ def normalize_item_name(name: str) -> str:
 
 
 def load_item_prices() -> dict[str, int]:
-    if ITEM_CACHE.exists():
+    for item_file in [ITEM_CACHE, bundled_dir() / "item_prices.json"]:
+        if not item_file.exists():
+            continue
         try:
-            cached = json.loads(ITEM_CACHE.read_text(encoding="utf-8"))
+            cached = json.loads(item_file.read_text(encoding="utf-8"))
             return {str(name): as_int(cost) for name, cost in cached.items()}
         except (OSError, json.JSONDecodeError):
             pass

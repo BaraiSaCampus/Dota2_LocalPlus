@@ -33,7 +33,10 @@ def looks_like_dota_root(path: Path) -> bool:
 
 
 def local_dota_candidates() -> list[Path]:
-    script_dir = Path(__file__).resolve().parent
+    if getattr(sys, "frozen", False):
+        script_dir = Path(sys.executable).resolve().parent
+    else:
+        script_dir = Path(__file__).resolve().parent
     candidates: list[Path] = []
 
     # Supports both layouts:
