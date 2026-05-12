@@ -102,15 +102,6 @@ def normalize_item_name(name: str) -> str:
 
 
 def load_item_prices() -> dict[str, int]:
-    for item_file in [ITEM_CACHE, bundled_dir() / "item_prices.json"]:
-        if not item_file.exists():
-            continue
-        try:
-            cached = json.loads(item_file.read_text(encoding="utf-8"))
-            return {str(name): as_int(cost) for name, cost in cached.items()}
-        except (OSError, json.JSONDecodeError):
-            pass
-
     try:
         with urllib.request.urlopen(ITEM_SOURCE_URL, timeout=8) as response:
             data = json.loads(response.read().decode("utf-8"))
@@ -122,7 +113,18 @@ def load_item_prices() -> dict[str, int]:
         ITEM_CACHE.write_text(json.dumps(prices, ensure_ascii=False, indent=2), encoding="utf-8")
         return prices
     except Exception:
-        return {}
+        pass
+
+    for item_file in [ITEM_CACHE, bundled_dir() / "item_prices.json"]:
+        if not item_file.exists():
+            continue
+        try:
+            cached = json.loads(item_file.read_text(encoding="utf-8"))
+            return {str(name): as_int(cost) for name, cost in cached.items()}
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    return {}
 
 
 def extract_item_names(value: Any) -> list[str]:
@@ -376,6 +378,7 @@ class EconomyOverlay(QWidget):
         self.visibility_override = "auto"
         self.click_through = False
         self.settings_button = QRect(78, 11, 22, 22)
+        self.close_button = QRect(BASE_WIDTH - 30, 11, 22, 22)
 
         self.setWindowTitle("Dota2 Economy Overlay")
         self.setGeometry(80, 80, BASE_WIDTH, BASE_HEIGHT)
@@ -413,6 +416,14 @@ class EconomyOverlay(QWidget):
         painter.drawText(self.settings_button, Qt.AlignCenter, "\u2699")
 
         if not self.click_through:
+            self.close_button = QRect(self.width() - round(30 * scale), round(11 * scale), round(22 * scale), round(22 * scale))
+            painter.setPen(QColor(215, 222, 233, 180))
+            painter.setBrush(QColor(255, 255, 255, 20))
+            painter.drawRoundedRect(self.close_button, 5, 5)
+            painter.setPen(QColor("#f8fafc"))
+            painter.setFont(QFont("Segoe UI", max(8, round(11 * scale)), QFont.Bold))
+            painter.drawText(self.close_button, Qt.AlignCenter, "X")
+
             handle = self.resize_handle_rect()
             painter.setPen(QColor(255, 255, 255, 150))
             painter.drawLine(handle.right() - 3, handle.bottom() - 14, handle.right() - 3, handle.bottom() - 3)
@@ -463,6 +474,9 @@ class EconomyOverlay(QWidget):
         if self.click_through:
             return
         if event.button() == Qt.LeftButton:
+            if self.close_button.contains(event.position().toPoint()):
+                self.close()
+                return
             if self.resize_handle_rect().contains(event.position().toPoint()):
                 self.resize_origin = event.globalPosition().toPoint()
                 self.resize_start_geometry = self.geometry()

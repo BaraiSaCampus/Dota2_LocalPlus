@@ -35,7 +35,6 @@ Remove-Item -Recurse -Force ".\dist" -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force ".\release" -ErrorAction SilentlyContinue
 
 $separator = if ($IsWindows -or $env:OS -eq "Windows_NT") { ";" } else { ":" }
-$dataArg = "item_prices.json${separator}."
 $modeArgs = if ($OneFile) { @("--onefile") } else { @("--onedir") }
 
 $pyInstallerArgs = @(
@@ -47,7 +46,6 @@ $pyInstallerArgs = @(
 $pyInstallerArgs += $modeArgs
 $pyInstallerArgs += @(
     "--name", "Dota2_LocalPlus",
-    "--add-data", $dataArg,
     ".\Dota2_LocalPlus.py"
 )
 Invoke-Python -Arguments $pyInstallerArgs
@@ -61,6 +59,7 @@ if ($OneFile) {
 }
 
 Copy-Item ".\README.md" ".\release\Dota2_LocalPlus\README.md" -Force
+Copy-Item ".\item_prices.json" ".\release\Dota2_LocalPlus\item_prices.json" -Force
 
 $launcher = @'
 @echo off

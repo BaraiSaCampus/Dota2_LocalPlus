@@ -29,7 +29,9 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
 
 ### 推荐方式：便携版
 
-最推荐普通用户使用便携版。便携版已经包含 Python 运行环境、PySide6/Qt 依赖和物品价格缓存，不需要用户安装 Python，也不需要联网安装依赖。
+最推荐普通用户使用便携版。便携版已经包含 Python 运行环境、PySide6/Qt 依赖和初始物品价格缓存，不需要用户安装 Python，也不需要联网安装依赖。
+
+注意：`release` 属于本地构建产物，不再推送到远程仓库。开发者需要在本地运行 `build_portable.ps1` 生成便携版压缩包。
 
 使用方式：
 
@@ -58,6 +60,26 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
    ```
 
 程序启动时会自动写入 Dota2 GSI 配置，然后打开经济覆盖层。未进入对局时窗口会自动隐藏，进入对局后会自动显示。
+
+物品价格文件 `item_prices.json` 会放在 `Dota2_LocalPlus.exe` 同级目录，方便手动替换。程序每次启动都会先尝试从 OpenDota `dotaconstants` 自动更新一次；如果更新失败，会继续使用本地现有的 `item_prices.json`。
+
+### 构建便携版
+
+开发者在源码目录运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_portable.ps1
+```
+
+构建完成后会生成：
+
+```text
+release\Dota2_LocalPlus\Dota2_LocalPlus.exe
+release\Dota2_LocalPlus\item_prices.json
+release\Dota2_LocalPlus_portable.zip
+```
+
+这些文件只作为本地发布包使用，不提交到 Git 远程仓库。
 
 ### 源码方式：一键安装并启动
 
@@ -271,7 +293,7 @@ overlay_settings.json
 
 Dota2 GSI 会推送当前金币和物品栏数据。程序根据公开物品价格表计算物品价值，再加上当前金币得到总资产。物品价格来自 OpenDota `dotaconstants`，会缓存到 `item_prices.json`。
 
-如果 Dota2 更新了物品价格，可以删除 `item_prices.json` 后重新启动程序，程序会重新拉取价格表。
+程序启动时会自动尝试更新 `item_prices.json`。如果你想手动更新，也可以直接替换 exe 同级目录下的 `item_prices.json`。
 
 ### 这会封号吗？
 
