@@ -13,7 +13,7 @@ Supported files:
 Example download command on a networked PC:
 
 ```powershell
-python -m pip download PySide6 -d .\dependencies
+python -m pip download -r .\requirements.txt -d .\dependencies
 ```
 
 After these files are present, `install_and_run.bat` installs PySide6 with:

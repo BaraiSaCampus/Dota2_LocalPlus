@@ -5,6 +5,26 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
+function Show-UserMessage {
+    param(
+        [string]$Message,
+        [bool]$IsError = $false
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+    $icon = if ($IsError) {
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    } else {
+        [System.Windows.Forms.MessageBoxIcon]::Information
+    }
+    [void][System.Windows.Forms.MessageBox]::Show(
+        $Message,
+        "Dota2 LocalPlus",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        $icon
+    )
+}
+
 function Find-Python {
     $commands = @(
         @{ File = "python"; Args = @("--version") },
@@ -101,6 +121,9 @@ function Ensure-Python {
     }
 
     winget install --id Python.Python.3.11 -e --source winget --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python could not be installed automatically. Check the network connection, then install Python 3.11 from Microsoft Store and try again."
+    }
     Add-CommonPythonPaths
 
     $python = Find-Python
@@ -121,49 +144,60 @@ function Invoke-Python {
     $allArgs += $Python.Prefix
     $allArgs += $Arguments
     & $Python.File @allArgs
-}
-
-$python = Ensure-Python
-
-Write-Host "Using Python:"
-Invoke-Python -Python $python -Arguments @("--version")
-
-Write-Host "Installing Python dependency: PySide6"
-$dependencyDirs = Get-DependencyDirectories
-$localPySide = $null
-foreach ($dir in $dependencyDirs) {
-    $wheel = Get-ChildItem -LiteralPath $dir -File -Filter "PySide6*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($wheel) {
-        $localPySide = $dir
-        break
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python command failed (exit code ${LASTEXITCODE}): $($Arguments -join ' ')"
     }
 }
 
-Invoke-Python -Python $python -Arguments @("-m", "ensurepip", "--upgrade")
-if ($localPySide) {
-    Write-Host "Installing PySide6 from local dependency folder: $localPySide"
-    Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--no-index", "--find-links", $localPySide, "PySide6")
-} else {
-    Write-Host "No local PySide6 wheels found. Installing PySide6 from PyPI."
-    Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--upgrade", "pip")
-    Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "PySide6")
+try {
+    $python = Ensure-Python
+
+    Write-Host "Using Python:"
+    Invoke-Python -Python $python -Arguments @("--version")
+
+    Write-Host "Installing pinned Python runtime dependencies"
+    $dependencyDirs = Get-DependencyDirectories
+    $localPySide = $null
+    foreach ($dir in $dependencyDirs) {
+        $wheel = Get-ChildItem -LiteralPath $dir -File -Filter "PySide6*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($wheel) {
+            $localPySide = $dir
+            break
+        }
+    }
+
+    Invoke-Python -Python $python -Arguments @("-m", "ensurepip", "--upgrade")
+    if ($localPySide) {
+        Write-Host "Installing runtime dependencies from local folder: $localPySide"
+        Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--no-index", "--find-links", $localPySide, "-r", ".\requirements.txt")
+    } else {
+        Write-Host "No local PySide6 wheels found. Installing pinned dependencies from PyPI."
+        Invoke-Python -Python $python -Arguments @("-m", "pip", "install", "--disable-pip-version-check", "-r", ".\requirements.txt")
+    }
+
+    Write-Host "Writing Dota2 Game State Integration config"
+    if ([string]::IsNullOrWhiteSpace($DotaPath)) {
+        Invoke-Python -Python $python -Arguments @(".\install_gsi_config.py", "--select")
+    } else {
+        Invoke-Python -Python $python -Arguments @(".\install_gsi_config.py", $DotaPath)
+    }
+
+    Write-Host "Starting Dota2 Economy Overlay"
+    $startArgs = @()
+    $startArgs += $python.Prefix
+    $startArgs += ".\economy_overlay.py"
+    Start-Process -FilePath $python.File -ArgumentList $startArgs -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+
+    Write-Host ""
+    Write-Host "Done. Restart Dota2 if it is already running."
+    Write-Host "Default hotkeys:"
+    Write-Host "  Ctrl+Alt+E  Force show/hide"
+    Write-Host "  Ctrl+Alt+T  Toggle mouse click-through"
+    Write-Host "  Ctrl+Alt+Q  Exit Dota2 LocalPlus"
+    Show-UserMessage "Setup complete.`n`nThe overlay has started. Restart Dota2 if it is already running.`n`nTo exit: press Ctrl + Alt + Q, or right-click the system tray icon and choose Exit."
+} catch {
+    $message = "Setup did not finish.`n`n$($_.Exception.Message)`n`nCheck the network connection, then double-click install_and_run.bat again."
+    Write-Error $message
+    Show-UserMessage -Message $message -IsError $true
+    exit 1
 }
-
-Write-Host "Writing Dota2 Game State Integration config"
-if ([string]::IsNullOrWhiteSpace($DotaPath)) {
-    Invoke-Python -Python $python -Arguments @(".\install_gsi_config.py")
-} else {
-    Invoke-Python -Python $python -Arguments @(".\install_gsi_config.py", $DotaPath)
-}
-
-Write-Host "Starting Dota2 Economy Overlay"
-$startArgs = @()
-$startArgs += $python.Prefix
-$startArgs += ".\economy_overlay.py"
-Start-Process -FilePath $python.File -ArgumentList $startArgs -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
-
-Write-Host ""
-Write-Host "Done. Restart Dota2 if it is already running."
-Write-Host "Default hotkeys:"
-Write-Host "  Ctrl+Alt+E  Force show/hide"
-Write-Host "  Ctrl+Alt+T  Toggle mouse click-through"

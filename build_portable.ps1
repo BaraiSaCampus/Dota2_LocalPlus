@@ -21,9 +21,8 @@ function Invoke-Python {
     throw "Python is required to build the portable package."
 }
 
-Write-Host "Installing build dependency: PyInstaller"
-Invoke-Python -Arguments @("-m", "pip", "install", "PyInstaller")
-Invoke-Python -Arguments @("-m", "pip", "install", "PySide6")
+Write-Host "Installing pinned build dependencies"
+Invoke-Python -Arguments @("-m", "pip", "install", "-r", ".\requirements-build.txt")
 
 if (-not (Test-Path -LiteralPath ".\item_prices.json")) {
     Write-Host "Generating item price cache"
@@ -34,7 +33,6 @@ Remove-Item -Recurse -Force ".\build" -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force ".\dist" -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force ".\release" -ErrorAction SilentlyContinue
 
-$separator = if ($IsWindows -or $env:OS -eq "Windows_NT") { ";" } else { ":" }
 $modeArgs = if ($OneFile) { @("--onefile") } else { @("--onedir") }
 
 $pyInstallerArgs = @(
@@ -61,14 +59,7 @@ if ($OneFile) {
 Copy-Item ".\README.md" ".\release\Dota2_LocalPlus\README.md" -Force
 Copy-Item ".\item_prices.json" ".\release\Dota2_LocalPlus\item_prices.json" -Force
 
-$launcher = @'
-@echo off
-setlocal
-pushd "%~dp0"
-start "" "%~dp0Dota2_LocalPlus.exe"
-popd
-'@
-[System.IO.File]::WriteAllText((Join-Path $PWD "release\Dota2_LocalPlus\Start_Dota2_LocalPlus.bat"), ($launcher -replace "`n", "`r`n"), [System.Text.Encoding]::ASCII)
+Copy-Item ".\Start_Dota2_LocalPlus.bat" ".\release\Dota2_LocalPlus\Start_Dota2_LocalPlus.bat" -Force
 
 Compress-Archive -Path ".\release\Dota2_LocalPlus" -DestinationPath ".\release\Dota2_LocalPlus_portable.zip" -Force
 

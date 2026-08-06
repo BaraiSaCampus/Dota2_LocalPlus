@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 import time
@@ -8,13 +9,15 @@ import urllib.request
 import ctypes
 import ctypes.wintypes
 import sys
-from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+from economy_core import EconomyState, LatestPayload, as_int, extract_item_names, is_valid_gsi_payload, normalize_item_name
+
 from PySide6.QtCore import QPoint, QRect, QTimer, Qt
-from PySide6.QtGui import QColor, QFont, QKeySequence, QLinearGradient, QPainter
+from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QLinearGradient, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -22,7 +25,11 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QLabel,
     QKeySequenceEdit,
+    QMessageBox,
     QPushButton,
+    QMenu,
+    QStyle,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -30,13 +37,14 @@ from PySide6.QtWidgets import (
 
 HOST = "127.0.0.1"
 PORT = 3007
-HISTORY_SECONDS = 60
+MAX_REQUEST_BYTES = 128 * 1024
 BASE_WIDTH = 240
 BASE_HEIGHT = 178
 ITEM_SOURCE_URL = "https://raw.githubusercontent.com/odota/dotaconstants/master/build/items.json"
 DEFAULT_SETTINGS = {
     "visibility_hotkey": "Ctrl+Alt+E",
     "click_through_hotkey": "Ctrl+Alt+T",
+    "exit_hotkey": "Ctrl+Alt+Q",
 }
 IN_MATCH_STATES = {
     "DOTA_GAMERULES_STATE_PRE_GAME",
@@ -58,6 +66,20 @@ def bundled_dir() -> Path:
 
 ITEM_CACHE = app_dir() / "item_prices.json"
 SETTINGS_FILE = app_dir() / "overlay_settings.json"
+LOG_FILE = app_dir() / "overlay.log"
+LOGGER = logging.getLogger("dota2_localplus")
+
+
+def configure_logging() -> None:
+    if LOGGER.handlers:
+        return
+    LOGGER.setLevel(logging.INFO)
+    try:
+        handler = RotatingFileHandler(LOG_FILE, maxBytes=256 * 1024, backupCount=2, encoding="utf-8")
+    except OSError:
+        handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    LOGGER.addHandler(handler)
 
 
 def load_settings() -> dict[str, str]:
@@ -66,19 +88,15 @@ def load_settings() -> dict[str, str]:
             loaded = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             return {**DEFAULT_SETTINGS, **{k: str(v) for k, v in loaded.items()}}
         except (OSError, json.JSONDecodeError):
-            pass
+            LOGGER.warning("Could not read settings; using defaults.", exc_info=True)
     return dict(DEFAULT_SETTINGS)
 
 
 def save_settings(settings: dict[str, str]) -> None:
-    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def as_int(value: Any, default: int = 0) -> int:
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+        SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        LOGGER.error("Could not save settings: %s", SETTINGS_FILE, exc_info=True)
 
 
 def format_clock(seconds: int) -> str:
@@ -87,34 +105,7 @@ def format_clock(seconds: int) -> str:
     return f"{sign}{seconds // 60:02d}:{seconds % 60:02d}"
 
 
-def clean_hero_name(name: str) -> str:
-    name = name.replace("npc_dota_hero_", "")
-    if not name:
-        return "英雄"
-    return " ".join(part.capitalize() for part in name.split("_"))
-
-
-def normalize_item_name(name: str) -> str:
-    name = name.strip()
-    if name.startswith("item_"):
-        name = name[5:]
-    return name
-
-
-def load_item_prices() -> dict[str, int]:
-    try:
-        with urllib.request.urlopen(ITEM_SOURCE_URL, timeout=8) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        prices = {
-            normalize_item_name(name): as_int(details.get("cost"))
-            for name, details in data.items()
-            if isinstance(details, dict) and as_int(details.get("cost")) > 0
-        }
-        ITEM_CACHE.write_text(json.dumps(prices, ensure_ascii=False, indent=2), encoding="utf-8")
-        return prices
-    except Exception:
-        pass
-
+def load_cached_item_prices() -> dict[str, int]:
     for item_file in [ITEM_CACHE, bundled_dir() / "item_prices.json"]:
         if not item_file.exists():
             continue
@@ -122,26 +113,63 @@ def load_item_prices() -> dict[str, int]:
             cached = json.loads(item_file.read_text(encoding="utf-8"))
             return {str(name): as_int(cost) for name, cost in cached.items()}
         except (OSError, json.JSONDecodeError):
-            pass
+            LOGGER.warning("Could not read item-price cache: %s", item_file, exc_info=True)
 
     return {}
 
 
-def extract_item_names(value: Any) -> list[str]:
-    names: list[str] = []
+def save_item_prices(prices: dict[str, int]) -> None:
+    temp_file = ITEM_CACHE.with_suffix(".json.tmp")
+    try:
+        temp_file.write_text(json.dumps(prices, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_file.replace(ITEM_CACHE)
+    except OSError:
+        LOGGER.warning("Could not save item-price cache: %s", ITEM_CACHE, exc_info=True)
+        try:
+            temp_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
-    if isinstance(value, dict):
-        item_name = value.get("name")
-        if isinstance(item_name, str) and item_name and item_name != "empty":
-            names.append(normalize_item_name(item_name))
 
-        for child in value.values():
-            names.extend(extract_item_names(child))
-    elif isinstance(value, list):
-        for child in value:
-            names.extend(extract_item_names(child))
+def fetch_item_prices() -> dict[str, int]:
+    with urllib.request.urlopen(ITEM_SOURCE_URL, timeout=8) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("The item-price response was not a JSON object.")
+    prices = {
+        normalize_item_name(name): as_int(details.get("cost"))
+        for name, details in data.items()
+        if isinstance(details, dict) and as_int(details.get("cost")) > 0
+    }
+    if not prices:
+        raise ValueError("The item-price response did not contain valid prices.")
+    save_item_prices(prices)
+    return prices
 
-    return names
+
+def load_item_prices() -> dict[str, int]:
+    """Fetch prices for build-time use, falling back to a bundled cache."""
+    try:
+        return fetch_item_prices()
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+        LOGGER.warning("Could not refresh item prices; using the local cache.", exc_info=True)
+        return load_cached_item_prices()
+
+
+def refresh_item_prices_async(result_queue: "queue.Queue[dict[str, int]]") -> None:
+    def worker() -> None:
+        try:
+            prices = fetch_item_prices()
+        except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+            LOGGER.warning("Could not refresh item prices; continuing with the local cache.", exc_info=True)
+            return
+
+        try:
+            result_queue.put_nowait(prices)
+        except queue.Full:
+            return
+
+    threading.Thread(target=worker, name="item-price-refresh", daemon=True).start()
 
 
 VK_CODES = {
@@ -219,6 +247,7 @@ class HotkeyManager:
         hotkeys = [
             (1, settings.get("visibility_hotkey", ""), "toggle_visibility"),
             (2, settings.get("click_through_hotkey", ""), "toggle_click_through"),
+            (3, settings.get("exit_hotkey", ""), "quit"),
         ]
 
         for hotkey_id, sequence, _action in hotkeys:
@@ -228,10 +257,12 @@ class HotkeyManager:
             modifiers, key = parsed
             if user32.RegisterHotKey(None, hotkey_id, modifiers, key):
                 registered.append(hotkey_id)
+            else:
+                LOGGER.warning("Could not register hotkey: %s", sequence)
 
         msg = ctypes.wintypes.MSG()
         try:
-            while not self.stop_event.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+            while not self.stop_event.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
                 if msg.message == self.WM_HOTKEY:
                     for hotkey_id, _sequence, action in hotkeys:
                         if msg.wParam == hotkey_id:
@@ -249,14 +280,16 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("覆盖层设置")
         self.setModal(True)
-        self.resize(360, 150)
+        self.resize(360, 190)
 
         self.visibility_edit = QKeySequenceEdit(QKeySequence(settings["visibility_hotkey"]))
         self.click_through_edit = QKeySequenceEdit(QKeySequence(settings["click_through_hotkey"]))
+        self.exit_edit = QKeySequenceEdit(QKeySequence(settings["exit_hotkey"]))
 
         form = QFormLayout()
         form.addRow("强制隐藏/出现", self.visibility_edit)
         form.addRow("鼠标穿透", self.click_through_edit)
+        form.addRow("退出程序", self.exit_edit)
 
         reset_button = QPushButton("恢复自动显示")
         reset_button.clicked.connect(parent.clear_visibility_override)  # type: ignore[attr-defined]
@@ -275,98 +308,53 @@ class SettingsDialog(QDialog):
         return {
             "visibility_hotkey": self.visibility_edit.keySequence().toString(QKeySequence.NativeText),
             "click_through_hotkey": self.click_through_edit.keySequence().toString(QKeySequence.NativeText),
+            "exit_hotkey": self.exit_edit.keySequence().toString(QKeySequence.NativeText),
         }
 
 
-@dataclass
-class EconomyState:
-    connected: bool = False
-    updated_at: float = 0.0
-    hero_name: str = "等待 Dota2 数据"
-    game_time: int = 0
-    map_state: str = "unknown"
-    gold: int = 0
-    reliable_gold: int = 0
-    unreliable_gold: int = 0
-    item_value: int = 0
-    net_worth: int = 0
-    unknown_items: list[str] = field(default_factory=list)
-    gpm: int = 0
-    xpm: int = 0
-    last_hits: int = 0
-    denies: int = 0
-    kills: int = 0
-    deaths: int = 0
-    assists: int = 0
-    level: int = 0
-    net_worth_history: list[tuple[float, int]] = field(default_factory=list)
-
-    def update_from_payload(self, payload: dict[str, Any], item_prices: dict[str, int]) -> None:
-        now = time.time()
-        player = payload.get("player") or {}
-        hero = payload.get("hero") or {}
-        map_data = payload.get("map") or {}
-
-        self.connected = True
-        self.updated_at = now
-        self.hero_name = clean_hero_name(str(hero.get("name") or player.get("name") or "英雄"))
-        self.game_time = as_int(map_data.get("clock_time"), self.game_time)
-        self.map_state = str(map_data.get("game_state") or self.map_state)
-
-        self.gold = as_int(player.get("gold"), self.gold)
-        self.reliable_gold = as_int(player.get("gold_reliable"), self.reliable_gold)
-        self.unreliable_gold = as_int(player.get("gold_unreliable"), self.unreliable_gold)
-        self.gpm = as_int(player.get("gpm"), self.gpm)
-        self.xpm = as_int(player.get("xpm"), self.xpm)
-        self.last_hits = as_int(player.get("last_hits"), self.last_hits)
-        self.denies = as_int(player.get("denies"), self.denies)
-        self.kills = as_int(player.get("kills"), self.kills)
-        self.deaths = as_int(player.get("deaths"), self.deaths)
-        self.assists = as_int(player.get("assists"), self.assists)
-        self.level = as_int(hero.get("level"), self.level)
-
-        item_names = extract_item_names(payload.get("items") or {})
-        self.item_value = sum(item_prices.get(name, 0) for name in item_names)
-        self.unknown_items = sorted({name for name in item_names if name not in item_prices})
-        self.net_worth = self.gold + self.item_value
-
-        self.net_worth_history.append((now, self.net_worth))
-        cutoff = now - HISTORY_SECONDS
-        self.net_worth_history = [(ts, worth) for ts, worth in self.net_worth_history if ts >= cutoff]
-
-    @property
-    def recent_net_worth_delta(self) -> int:
-        if len(self.net_worth_history) < 2:
-            return 0
-        return self.net_worth_history[-1][1] - self.net_worth_history[0][1]
-
-
 class GSIHandler(BaseHTTPRequestHandler):
-    data_queue: "queue.Queue[dict[str, Any]]"
+    payload_buffer: LatestPayload
 
     def do_POST(self) -> None:
-        length = as_int(self.headers.get("Content-Length"))
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length) if raw_length is not None else -1
+        except ValueError:
+            length = -1
+        if length < 1:
+            self.send_error(411, "A valid Content-Length header is required")
+            return
+        if length > MAX_REQUEST_BYTES:
+            self.send_error(413, "Payload too large")
+            return
         raw_body = self.rfile.read(length)
 
         try:
             payload = json.loads(raw_body.decode("utf-8"))
-            self.data_queue.put(payload)
+            if not is_valid_gsi_payload(payload):
+                self.send_error(400, "Invalid GSI payload")
+                return
+            self.payload_buffer.publish(payload)
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
-        except json.JSONDecodeError:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"Invalid JSON")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_error(400, "Invalid JSON")
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
 
 
 class EconomyOverlay(QWidget):
-    def __init__(self, data_queue: "queue.Queue[dict[str, Any]]", item_prices: dict[str, int]) -> None:
+    def __init__(
+        self,
+        payload_buffer: LatestPayload,
+        item_prices: dict[str, int],
+        price_queue: "queue.Queue[dict[str, int]]",
+    ) -> None:
         super().__init__()
-        self.data_queue = data_queue
+        self.payload_buffer = payload_buffer
+        self.price_queue = price_queue
         self.action_queue: "queue.Queue[str]" = queue.Queue()
         self.item_prices = item_prices
         self.settings = load_settings()
@@ -377,6 +365,7 @@ class EconomyOverlay(QWidget):
         self.resize_start_geometry: QRect | None = None
         self.visibility_override = "auto"
         self.click_through = False
+        self._is_shutting_down = False
         self.settings_button = QRect(78, 11, 22, 22)
         self.close_button = QRect(BASE_WIDTH - 30, 11, 22, 22)
 
@@ -385,11 +374,38 @@ class EconomyOverlay(QWidget):
         self.setMinimumSize(224, 166)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.tray_icon = self._create_tray_icon()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._schedule_update)
         self.timer.start(250)
         self.hotkeys.start(self.settings)
+
+    def _create_tray_icon(self) -> QSystemTrayIcon | None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            LOGGER.warning("The system tray is unavailable; use the exit hotkey to close the app.")
+            return None
+
+        tray = QSystemTrayIcon(QApplication.style().standardIcon(QStyle.SP_ComputerIcon), self)
+        tray.setToolTip("Dota2 LocalPlus")
+        menu = QMenu()
+        show_action = QAction("显示覆盖层", menu)
+        show_action.triggered.connect(self.show_from_tray)
+        auto_action = QAction("恢复自动显示", menu)
+        auto_action.triggered.connect(self.clear_visibility_override)
+        quit_action = QAction("退出 Dota2 LocalPlus", menu)
+        quit_action.triggered.connect(self.request_quit)
+        menu.addAction(show_action)
+        menu.addAction(auto_action)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+        self.tray_menu = menu
+        tray.activated.connect(
+            lambda reason: self.show_from_tray() if reason == QSystemTrayIcon.DoubleClick else None
+        )
+        tray.show()
+        return tray
 
     def paintEvent(self, _event: Any) -> None:
         painter = QPainter(self)
@@ -434,6 +450,15 @@ class EconomyOverlay(QWidget):
         painter.setFont(QFont("Segoe UI", max(20, round(30 * scale)), QFont.Bold))
         painter.drawText(round(16 * scale), round(68 * scale), f"{self.state_data.net_worth:,}")
 
+        if self.state_data.unknown_items:
+            painter.setPen(QColor("#fbbf24"))
+            painter.setFont(QFont("Microsoft YaHei UI", max(6, round(8 * scale))))
+            painter.drawText(
+                round(16 * scale),
+                round(88 * scale),
+                f"估算：{len(self.state_data.unknown_items)} 个物品未计价",
+            )
+
         painter.setPen(QColor("#e2e8f0"))
         painter.setFont(QFont("Segoe UI", max(8, round(12 * scale))))
         painter.drawText(
@@ -475,7 +500,7 @@ class EconomyOverlay(QWidget):
             return
         if event.button() == Qt.LeftButton:
             if self.close_button.contains(event.position().toPoint()):
-                self.close()
+                self.request_quit()
                 return
             if self.resize_handle_rect().contains(event.position().toPoint()):
                 self.resize_origin = event.globalPosition().toPoint()
@@ -513,11 +538,11 @@ class EconomyOverlay(QWidget):
 
     def mouseDoubleClickEvent(self, event: Any) -> None:
         if event.button() == Qt.LeftButton:
-            self.close()
+            self.request_quit()
 
     def keyPressEvent(self, event: Any) -> None:
         if event.key() == Qt.Key_Escape:
-            self.close()
+            self.request_quit()
 
     def resize_handle_rect(self) -> QRect:
         scale = max(0.75, min(self.width() / BASE_WIDTH, self.height() / BASE_HEIGHT))
@@ -525,12 +550,15 @@ class EconomyOverlay(QWidget):
         return QRect(max(0, self.width() - size), max(0, self.height() - size), size, size)
 
     def _schedule_update(self) -> None:
-        while True:
-            try:
-                payload = self.data_queue.get_nowait()
-            except queue.Empty:
-                break
+        payload = self.payload_buffer.consume()
+        if payload is not None:
             self.state_data.update_from_payload(payload, self.item_prices)
+
+        try:
+            self.item_prices = self.price_queue.get_nowait()
+            LOGGER.info("Item prices refreshed: %s entries", len(self.item_prices))
+        except queue.Empty:
+            pass
 
         while True:
             try:
@@ -541,6 +569,15 @@ class EconomyOverlay(QWidget):
                 self.toggle_visibility_override()
             elif action == "toggle_click_through":
                 self.set_click_through(not self.click_through)
+            elif action == "quit":
+                self.request_quit()
+
+        if self.state_data.unknown_items:
+            self.setToolTip(
+                "总资产为估算值；未计价物品：" + ", ".join(self.state_data.unknown_items[:5])
+            )
+        else:
+            self.setToolTip("Dota2 LocalPlus")
 
         self.apply_visibility()
         self.update()
@@ -594,13 +631,32 @@ class EconomyOverlay(QWidget):
         save_settings(self.settings)
         self.hotkeys.start(self.settings)
 
-    def closeEvent(self, event: Any) -> None:
+    def show_from_tray(self) -> None:
+        self.visibility_override = "shown"
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def request_quit(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def shutdown(self) -> None:
+        if self._is_shutting_down:
+            return
+        self._is_shutting_down = True
         self.hotkeys.stop()
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+
+    def closeEvent(self, event: Any) -> None:
+        self.shutdown()
         super().closeEvent(event)
 
 
-def start_server(data_queue: "queue.Queue[dict[str, Any]]") -> ThreadingHTTPServer:
-    GSIHandler.data_queue = data_queue
+def start_server(payload_buffer: LatestPayload) -> ThreadingHTTPServer:
+    GSIHandler.payload_buffer = payload_buffer
     server = ThreadingHTTPServer((HOST, PORT), GSIHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -608,16 +664,30 @@ def start_server(data_queue: "queue.Queue[dict[str, Any]]") -> ThreadingHTTPServ
 
 
 def main() -> None:
-    data_queue: "queue.Queue[dict[str, Any]]" = queue.Queue()
-    item_prices = load_item_prices()
-    server = start_server(data_queue)
+    configure_logging()
+    qt_app = QApplication([])
+    payload_buffer = LatestPayload()
+    price_queue: "queue.Queue[dict[str, int]]" = queue.Queue(maxsize=1)
+    item_prices = load_cached_item_prices()
     try:
-        qt_app = QApplication([])
-        overlay = EconomyOverlay(data_queue, item_prices)
+        server = start_server(payload_buffer)
+    except OSError as error:
+        LOGGER.exception("Could not start the GSI server on %s:%s", HOST, PORT)
+        QMessageBox.critical(
+            None,
+            "Dota2 LocalPlus 无法启动",
+            f"无法监听 {HOST}:{PORT}。该端口可能已被其他程序占用。\n\n{error}",
+        )
+        return
+    try:
+        overlay = EconomyOverlay(payload_buffer, item_prices, price_queue)
+        qt_app.aboutToQuit.connect(overlay.shutdown)
         overlay.show()
+        refresh_item_prices_async(price_queue)
         qt_app.exec()
     finally:
         server.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":

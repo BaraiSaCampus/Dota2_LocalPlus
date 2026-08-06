@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import os
+import re
 from pathlib import Path
 
 
@@ -51,16 +53,39 @@ def local_dota_candidates() -> list[Path]:
 
 
 def steam_library_candidates() -> list[Path]:
-    roots = [
+    steam_roots = [
         Path("C:/Program Files (x86)/Steam"),
         Path("C:/Program Files/Steam"),
     ]
+    for variable in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
+        value = os.environ.get(variable)
+        if value:
+            steam_roots.append(Path(value) / "Steam")
+
+    library_roots: list[Path] = []
+    for steam_root in steam_roots:
+        library_roots.append(steam_root)
+        library_file = steam_root / "steamapps/libraryfolders.vdf"
+        try:
+            contents = library_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for raw_path in re.findall(r'"path"\s*"([^"]+)"', contents):
+            library_roots.append(Path(raw_path.replace("\\\\", "\\")))
 
     for drive in "CDEFGHI":
-        roots.append(Path(f"{drive}:/SteamLibrary"))
-        roots.append(Path(f"{drive}:/Games/SteamLibrary"))
+        library_roots.append(Path(f"{drive}:/SteamLibrary"))
+        library_roots.append(Path(f"{drive}:/Games/SteamLibrary"))
 
-    return [root / "steamapps/common/dota 2 beta" for root in roots]
+    seen: set[str] = set()
+    candidates: list[Path] = []
+    for root in library_roots:
+        candidate = root / "steamapps/common/dota 2 beta"
+        key = str(candidate).lower()
+        if key not in seen:
+            seen.add(key)
+            candidates.append(candidate)
+    return candidates
 
 
 def candidate_dota_paths() -> list[Path]:
@@ -81,19 +106,48 @@ def find_dota_path() -> Path | None:
     return None
 
 
+def choose_dota_path() -> Path | None:
+    """Ask a non-technical user to select the Dota2 root folder when auto-detection fails."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox
+    except ImportError:
+        return None
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    messagebox.showinfo(
+        "Dota2 LocalPlus",
+        "没有自动找到 Dota2。\n\n"
+        "请在接下来打开的窗口中选择 Dota2 游戏根目录：\n"
+        "...\\steamapps\\common\\dota 2 beta",
+        parent=root,
+    )
+    selected = filedialog.askdirectory(title="选择 Dota2 游戏根目录", parent=root)
+    root.destroy()
+    if not selected:
+        return None
+    return Path(selected).expanduser().resolve()
+
+
 def main() -> int:
-    if len(sys.argv) > 1:
-        dota_path = Path(sys.argv[1]).expanduser().resolve()
+    arguments = [argument for argument in sys.argv[1:] if argument != "--select"]
+    allow_picker = "--select" in sys.argv[1:]
+    if arguments:
+        dota_path = Path(arguments[0]).expanduser().resolve()
     else:
         found = find_dota_path()
-        if found is None:
+        dota_path = found
+        if dota_path is None and allow_picker:
+            dota_path = choose_dota_path()
+        if dota_path is None:
             print("Could not find the Dota2 root folder.")
             print("If this tool folder is inside the Dota2 root, move it under:")
             print(r'  ...\steamapps\common\dota 2 beta\Dota2_LocalPlus')
             print("Or pass the Dota2 root path manually, for example:")
             print(r'  python .\install_gsi_config.py "D:\SteamLibrary\steamapps\common\dota 2 beta"')
             return 1
-        dota_path = found
 
     if not looks_like_dota_root(dota_path):
         print(f"This path does not look like the Dota2 root folder: {dota_path}")

@@ -29,37 +29,27 @@ Dota2 Economy Overlay 是一个本地运行的 Dota2 实时经济覆盖层，用
 
 ### 推荐方式：便携版
 
-最推荐普通用户使用便携版。便携版已经包含 Python 运行环境、PySide6/Qt 依赖和初始物品价格缓存，不需要用户安装 Python，也不需要联网安装依赖。
-
-注意：`release` 属于本地构建产物，不再推送到远程仓库。开发者需要在本地运行 `build_portable.ps1` 生成便携版压缩包。
+最推荐普通用户使用便携版。便携版已经包含 Python 运行环境、PySide6/Qt 依赖和初始物品价格缓存；**不需要安装 Python、打开命令行或安装依赖**。
 
 使用方式：
 
-1. 下载或复制：
+1. 在 [Releases](https://github.com/BaraiSaCampus/Dota2_LocalPlus/releases/latest) 下载 `Dota2_LocalPlus_portable.zip`。
+
+2. 解压到任意普通文件夹，例如：
 
    ```text
-   release\Dota2_LocalPlus_portable.zip
+   D:\Apps\Dota2_LocalPlus\
    ```
 
-2. 解压后，把整个文件夹放到 Dota2 游戏根目录里：
+3. 双击 `Start_Dota2_LocalPlus.bat`。程序会自动找到 Dota2 并写入配置；如果无法自动找到，会弹出文件夹选择窗口，只需选择：
 
    ```text
-   ...\steamapps\common\dota 2 beta\Dota2_LocalPlus\
+   ...\steamapps\common\dota 2 beta
    ```
 
-3. 双击运行：
+4. 如果 Dota2 已在运行，请重启一次游戏。之后每次只需双击同一个 `Start_Dota2_LocalPlus.bat`。
 
-   ```text
-   Dota2_LocalPlus.exe
-   ```
-
-   也可以双击：
-
-   ```text
-   Start_Dota2_LocalPlus.bat
-   ```
-
-程序启动时会自动写入 Dota2 GSI 配置，然后打开经济覆盖层。未进入对局时窗口会自动隐藏，进入对局后会自动显示。
+程序启动时会自动写入 Dota2 GSI 配置，然后打开经济覆盖层。未进入对局时窗口会自动隐藏，进入对局后会自动显示。系统托盘菜单可随时显示覆盖层或退出程序。
 
 物品价格文件 `item_prices.json` 会放在 `Dota2_LocalPlus.exe` 同级目录，方便手动替换。程序每次启动都会先尝试从 OpenDota `dotaconstants` 自动更新一次；如果更新失败，会继续使用本地现有的 `item_prices.json`。
 
@@ -79,11 +69,17 @@ release\Dota2_LocalPlus\item_prices.json
 release\Dota2_LocalPlus_portable.zip
 ```
 
-这些文件只作为本地发布包使用，不提交到 Git 远程仓库。
+推送 `v*` 标签时，GitHub Actions 会自动构建并发布该压缩包；也可在 Actions 页面手动触发构建并下载产物。
+
+开发完成后可运行核心测试：
+
+```powershell
+python -m unittest discover -s .\tests -v
+```
 
 ### 源码方式：一键安装并启动
 
-如果你拿到的是源码目录，而不是便携版压缩包，可以使用这个方式。
+如果你拿到的是源码目录，而不是便携版压缩包，可以使用这个方式。这是开发者/高级用户的备用方案；普通用户应使用上面的便携版。
 
 推荐目录结构：
 
@@ -111,16 +107,16 @@ release\Dota2_LocalPlus_portable.zip
    - 写入 Dota2 GSI 配置
    - 启动经济覆盖层
 
-如果系统没有 `winget`，请先手动安装 Python 3.10 或更新版本，再重新双击运行。
+如果系统没有 `winget`，脚本会弹出明确错误提示。建议直接使用便携版，避免在普通用户电脑上安装 Python。
 
-如果脚本没有找到你的 Dota2 安装目录，请使用手动安装方式。
+如果脚本没有找到 Dota2，会自动弹出文件夹选择窗口；请选择 `...\steamapps\common\dota 2 beta`。
 
 ### 离线依赖包
 
 如果要把项目发给没有网络或网络较差的新电脑，可以先在有网络的电脑执行：
 
 ```powershell
-python -m pip download PySide6 -d .\dependencies
+python -m pip download -r .\requirements.txt -d .\dependencies
 ```
 
 然后把整个项目文件夹复制到新电脑。新电脑运行 `install_and_run.bat` 时，会优先从 `dependencies` 文件夹安装，不会直接联网下载 PySide6。
@@ -138,7 +134,7 @@ dependencies\python-3.11.x-amd64.exe
 在当前项目目录打开 PowerShell，执行：
 
 ```powershell
-python -m pip install PySide6
+python -m pip install -r .\requirements.txt
 python .\install_gsi_config.py
 python .\economy_overlay.py
 ```
@@ -161,7 +157,7 @@ python .\install_gsi_config.py "D:\SteamLibrary\steamapps\common\dota 2 beta"
 
 ### 1. 启动覆盖层
 
-双击 `install_and_run.bat`，或者手动运行：
+便携版用户双击 `Start_Dota2_LocalPlus.bat`。源码用户双击 `install_and_run.bat`，或者手动运行：
 
 ```powershell
 python .\economy_overlay.py
@@ -188,6 +184,8 @@ python .\economy_overlay.py
 ```text
 总资产 = 当前持有金币 + 物品栏/背包/储藏处物品价值
 ```
+
+如果本地价格表未包含某件物品，覆盖层会标注“未计价物品”数量，并在鼠标悬停时显示名称；此时总资产为下限估算值。
 
 UI 截图：
 
@@ -232,11 +230,19 @@ Ctrl + Alt + T
 
 注意：鼠标穿透开启后，不能用鼠标点窗口关闭穿透，需要再次按快捷键。
 
+### 5. 退出程序
+
+可以通过以下任一种方式退出，不需要在任务管理器中结束进程：
+
+- 覆盖层右上角 `X`
+- 系统托盘图标右键菜单中的“退出 Dota2 LocalPlus”
+- 默认全局快捷键 `Ctrl + Alt + Q`
+
 鼠标穿透开启时，窗口不再响应鼠标点击、拖动和缩放。下图是鼠标穿透状态下的 UI 截图，右下角缩放热区不会显示：
 
 ![鼠标穿透状态](./docs/ui-overlay-clickthrough-v2.png)
 
-### 5. 打开设置
+### 6. 打开设置
 
 窗口中“总资产”右侧有一个小齿轮按钮。
 
@@ -244,6 +250,7 @@ Ctrl + Alt + T
 
 - 强制隐藏/出现快捷键
 - 鼠标穿透快捷键
+- 退出程序快捷键
 - 恢复自动显示
 
 设置会保存到：
@@ -256,11 +263,11 @@ overlay_settings.json
 
 ![设置面板](./docs/ui-settings-v2.png)
 
-### 6. 移动窗口
+### 7. 移动窗口
 
 鼠标穿透关闭时，在窗口空白区域按住左键拖动即可移动位置。
 
-### 7. 缩放窗口
+### 8. 缩放窗口
 
 鼠标穿透关闭时，拖动窗口右下角的缩放热区即可缩放。
 
